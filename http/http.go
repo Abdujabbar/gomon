@@ -9,7 +9,50 @@ import (
 )
 
 func init() {
-	gomon.RegisterPlugin(httpHandler)
+	gomon.RegisterPlugin(defaultPlugin)
+}
+
+type PluginConfig struct {
+	// in
+	RequestHeaders    bool
+	RequestRemoteAddr bool
+
+	// out
+	RespBody        bool
+	RespBodyMaxSize int
+	RespHeaders     bool
+	RespCode        bool
+}
+
+type wrappedMuxPlugin struct {
+	handler http.Handler
+
+	config   *PluginConfig
+	listener plugin.Listener
+}
+
+type wrappedResponseWriter struct {
+	http.ResponseWriter
+
+	tracker      httpEventTracker
+	body         *bytes.Buffer
+	config       *PluginConfig
+	responseCode int
+}
+
+var defaultPluginConfig = &PluginConfig{
+	RequestHeaders:  true,
+	RespBody:        true,
+	RespBodyMaxSize: 1024,
+	RespHeaders:     true,
+	RespCode:        true,
+}
+
+var _ plugin.Plugin = (*wrappedMuxPlugin)(nil)
+
+var defaultPlugin = &wrappedMuxPlugin{
+	handler: nil,
+	config:  defaultPluginConfig,
 }
 
 var (
@@ -30,49 +73,6 @@ const (
 	kResponseCodeDoNotSet = -2
 )
 
-type PluginConfig struct {
-	// in
-	RequestHeaders    bool
-	RequestRemoteAddr bool
-
-	// out
-	RespBody        bool
-	RespBodyMaxSize int
-	RespHeaders     bool
-	RespCode        bool
-}
-
-var defaultPluginConfig = &PluginConfig{
-	RequestHeaders:  true,
-	RespBody:        true,
-	RespBodyMaxSize: 1024,
-	RespHeaders:     true,
-	RespCode:        true,
-}
-
-type PluginNetHttp struct {
-	handler http.Handler
-
-	config   *PluginConfig
-	listener plugin.Listener
-}
-
-var _ plugin.Plugin = (*PluginNetHttp)(nil)
-
-var httpHandler = &PluginNetHttp{
-	handler: nil,
-	config:  defaultPluginConfig,
-}
-
-type responseWriter struct {
-	http.ResponseWriter
-
-	tracker      httpEventTracker
-	body         *bytes.Buffer
-	config       *PluginConfig
-	responseCode int
-}
-
 func min(a, b int) int {
 	if a > b {
 		return b
@@ -81,54 +81,8 @@ func min(a, b int) int {
 	}
 }
 
-func (r *responseWriter) Write(p []byte) (int, error) {
-	if r.config.RespBody {
-		diff := r.config.RespBodyMaxSize - r.body.Len()
-		_ = diff
-		if diff > 0 {
-			r.body.Write(p[:min(diff, len(p))])
-		}
-	}
-
-	if r.responseCode == kResponseCodeUnknown {
-		if r.config.RespCode {
-			r.responseCode = http.StatusOK
-			r.tracker.Set(KeyResponseCode, r.responseCode)
-		} else {
-			r.responseCode = kResponseCodeDoNotSet
-		}
-	}
-	return r.ResponseWriter.Write(p)
-}
-
-func (r *responseWriter) WriteHeader(code int) {
-	if r.config.RespCode {
-		r.responseCode = code
-		r.tracker.Set(KeyResponseCode, code)
-	}
-
-	r.ResponseWriter.WriteHeader(code)
-}
-
-func monitoredResponseWriter(w http.ResponseWriter, config *PluginConfig, et plugin.EventTracker) http.ResponseWriter {
-	wr := &responseWriter{
-		ResponseWriter: w,
-		tracker:        &httpEventTrackerImpl{et},
-		body:           bytes.NewBuffer(nil),
-		config:         config,
-		responseCode:   kResponseCodeUnknown,
-	}
-	if wr.config.RespBody {
-		et.Set(KeyResponseBody, wr.body)
-	}
-	if wr.config.RespHeaders {
-		wr.tracker.SetResponseHeaders(wr.ResponseWriter.Header())
-	}
-	return wr
-}
-
-func (p *PluginNetHttp) incomingRequestTracker(w http.ResponseWriter, r *http.Request) httpEventTracker {
-	tracker := &httpEventTrackerImpl{plugin.NewEventTracker()}
+func (p *wrappedMuxPlugin) incomingRequestTracker(w http.ResponseWriter, r *http.Request) httpEventTracker {
+	tracker := &httpEventTrackerImpl{plugin.NewEventTracker(p)}
 
 	tracker.SetDirection(kHttpDirectionIncoming)
 	tracker.SetMethod(r.Method)
@@ -145,28 +99,31 @@ func (p *PluginNetHttp) incomingRequestTracker(w http.ResponseWriter, r *http.Re
 	return tracker
 }
 
-func (p *PluginNetHttp) Name() string {
+func (p *wrappedMuxPlugin) Name() string {
 	return pluginName
 }
 
-func (p *PluginNetHttp) SetEventReceiver(listener plugin.Listener) {
+func (p *wrappedMuxPlugin) SetEventReceiver(listener plugin.Listener) {
 	p.listener = listener
 }
 
-func (p *PluginNetHttp) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+func (p *wrappedMuxPlugin) HandleTracker(et plugin.EventTracker) {
+	p.listener.Feed(p.Name(), et)
+}
+
+func (p *wrappedMuxPlugin) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	tracker := p.incomingRequestTracker(w, r)
 
 	w = monitoredResponseWriter(w, p.config, tracker)
-	tracker.SetFingerprint("ServeHTTP")
+	tracker.SetFingerprint("mux-servehttp")
 	tracker.Start()
 	defer tracker.Finish()
-	defer p.listener.Feed(p.Name(), tracker)
 
 	p.handler.ServeHTTP(w, r)
 }
 
-func (p *PluginNetHttp) MonitoringHandler(handler http.Handler) http.Handler {
+func (p *wrappedMuxPlugin) MonitoringHandler(handler http.Handler) http.Handler {
 	if handler == nil {
 		p.handler = http.DefaultServeMux
 	} else {
@@ -175,25 +132,77 @@ func (p *PluginNetHttp) MonitoringHandler(handler http.Handler) http.Handler {
 	return p
 }
 
-func (p *PluginNetHttp) MonitoringWrapper(handler http.HandlerFunc) http.HandlerFunc {
+func (p *wrappedMuxPlugin) MonitoringWrapper(handler http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 
 		tracker := p.incomingRequestTracker(w, r)
 
 		w = monitoredResponseWriter(w, p.config, tracker)
-		tracker.SetFingerprint("Handler")
+		tracker.SetFingerprint("mux-handler")
 		tracker.Start()
 		defer tracker.Finish()
-		defer p.listener.Feed(p.Name(), tracker)
 
 		handler(w, r)
 	}
 }
 
+func monitoredResponseWriter(w http.ResponseWriter, config *PluginConfig, et plugin.EventTracker) http.ResponseWriter {
+	wr := &wrappedResponseWriter{
+		ResponseWriter: w,
+		tracker:        &httpEventTrackerImpl{et},
+		body:           bytes.NewBuffer(nil),
+		config:         config,
+		responseCode:   kResponseCodeUnknown,
+	}
+	if wr.config.RespBody {
+		et.Set(KeyResponseBody, wr.body)
+	}
+	if wr.config.RespHeaders {
+		wr.tracker.SetResponseHeaders(wr.ResponseWriter.Header())
+	}
+	return wr
+}
+
+func (r *wrappedResponseWriter) Write(p []byte) (n int, err error) {
+	defer func() {
+		if err != nil {
+			r.tracker.AddError(err)
+		}
+	}()
+
+	if r.config.RespBody {
+		diff := r.config.RespBodyMaxSize - r.body.Len()
+		_ = diff
+		if diff > 0 {
+			r.body.Write(p[:min(diff, len(p))])
+		}
+	}
+
+	if r.responseCode == kResponseCodeUnknown {
+		if r.config.RespCode {
+			r.responseCode = http.StatusOK
+			r.tracker.Set(KeyResponseCode, r.responseCode)
+		} else {
+			r.responseCode = kResponseCodeDoNotSet
+		}
+	}
+	n, err = r.ResponseWriter.Write(p)
+	return
+}
+
+func (r *wrappedResponseWriter) WriteHeader(code int) {
+	if r.config.RespCode {
+		r.responseCode = code
+		r.tracker.Set(KeyResponseCode, code)
+	}
+
+	r.ResponseWriter.WriteHeader(code)
+}
+
 func MonitoringHandler(handler http.Handler) http.Handler {
-	return httpHandler.MonitoringHandler(handler)
+	return defaultPlugin.MonitoringHandler(handler)
 }
 
 func MonitoringWrapper(handler http.HandlerFunc) http.HandlerFunc {
-	return httpHandler.MonitoringWrapper(handler)
+	return defaultPlugin.MonitoringWrapper(handler)
 }
