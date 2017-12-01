@@ -16,7 +16,7 @@ Application performance monitoring tool
     * [x] Dependency management (dep)
     * [ ] Plugin system architecture
 * Web server performance monitoring
-    * [ ] net/http monitoring with wrappers
+    * [x] net/http monitoring with wrappers
     * [ ] net/http full API replacement
     * [ ] gin [https://github.com/gin-gonic/gin]
     * [ ] gorilla/mux [https://github.com/gorilla/mux]
@@ -34,9 +34,9 @@ Application performance monitoring tool
     * [ ] Memory / Heap usage
     * [ ] Goroutines
 * Monitoring API for custom solutions
-    * [ ] Plugin
-    * [ ] Listener
-    * [ ] EventTracker
+    * [x] Plugin
+    * [x] Listener
+    * [x] EventTracker
 * Network request monitoring
     * [ ] net.Listener
     * [ ] HTTP request
