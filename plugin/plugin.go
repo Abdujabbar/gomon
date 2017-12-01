@@ -1,6 +1,7 @@
 package plugin
 
 import (
+	"context"
 	"fmt"
 	"time"
 
@@ -57,6 +58,7 @@ type eventTrackerImpl struct {
 type ListenerFactoryFunc func(ListenerConfig) Listener
 type EventReceiverFunc func(et EventTracker)
 type EventType int
+type eventTrackerKey struct{}
 
 var _ EventTracker = (*eventTrackerImpl)(nil)
 
@@ -177,4 +179,21 @@ func FromTracker(et EventTracker, waitParent bool) EventTracker {
 		et.AddChildUUID(child.uuid)
 	}
 	return child
+}
+
+func FromContext(ctx context.Context, waitParent bool, p Plugin) EventTracker {
+	if ctx == nil {
+		return NewEventTracker(p)
+	}
+
+	parent := ctx.Value(eventTrackerKey{}).(EventTracker)
+	if parent != nil {
+		return FromTracker(parent, waitParent)
+	}
+
+	return NewEventTracker(p)
+}
+
+func ContextWith(ctx context.Context, et EventTracker) context.Context {
+	return context.WithValue(ctx, eventTrackerKey{}, et)
 }
