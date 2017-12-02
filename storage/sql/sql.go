@@ -17,18 +17,6 @@ type sqlPlugin struct {
 	listener plugin.Listener
 }
 
-type databaseEventTracker interface {
-	plugin.EventTracker
-
-	SetQuery(query string)
-	SetParams(params []driver.Value)
-	SetNamedParams(params []driver.NamedValue)
-}
-
-type databaseEventTrackerImpl struct {
-	plugin.EventTracker
-}
-
 type wrappedDriver struct {
 	parent driver.Driver
 	p      *sqlPlugin
@@ -39,32 +27,35 @@ type wrappedConn struct {
 	parent driver.Conn
 	p      *sqlPlugin
 	c      *PluginConfig
-	et     databaseEventTracker
+	et     plugin.EventTracker
 }
 
 type wrappedRows struct {
 	parent driver.Rows
 	p      *sqlPlugin
 	c      *PluginConfig
+	et     plugin.EventTracker
 }
 
 type wrappedStmt struct {
 	parent driver.Stmt
 	p      *sqlPlugin
 	c      *PluginConfig
-	et     databaseEventTracker
+	et     plugin.EventTracker
 }
 
 type wrappedTx struct {
 	parent driver.Tx
 	p      *sqlPlugin
 	c      *PluginConfig
+	et     plugin.EventTracker
 }
 
 type wrappedResult struct {
 	parent driver.Result
 	p      *sqlPlugin
 	c      *PluginConfig
+	et     plugin.EventTracker
 }
 
 var _ plugin.Plugin = (*sqlPlugin)(nil)
@@ -77,7 +68,6 @@ var _ driver.Rows = (*wrappedRows)(nil)
 var _ driver.Stmt = (*wrappedStmt)(nil)
 var _ driver.Tx = (*wrappedTx)(nil)
 var _ driver.Result = (*wrappedResult)(nil)
-var _ databaseEventTracker = (*databaseEventTrackerImpl)(nil)
 
 var defaultPluginConfig = &PluginConfig{
 	MaxRows:  10,
@@ -107,11 +97,6 @@ func (s *sqlPlugin) HandleTracker(et plugin.EventTracker) {
 	s.listener.Feed(s.Name(), et)
 }
 
-func (s *sqlPlugin) databaseEventTracker() databaseEventTracker {
-	tracker := &databaseEventTrackerImpl{plugin.NewEventTracker(s)}
-	return tracker
-}
-
 func MonitoringDriver(d driver.Driver) driver.Driver {
 	return &wrappedDriver{
 		parent: d,
@@ -123,7 +108,7 @@ func MonitoringDriver(d driver.Driver) driver.Driver {
 func (wdr *wrappedDriver) Open(name string) (conn driver.Conn, err error) {
 	defer func() {
 		if err != nil {
-			et := wdr.p.databaseEventTracker()
+			et := plugin.FromContext(nil, false, wdr.p)
 			et.AddError(err)
 			et.SetFingerprint("driver-open")
 			et.Set("driver-name", name)
@@ -143,9 +128,13 @@ func (wdr *wrappedDriver) Open(name string) (conn driver.Conn, err error) {
 }
 
 func (wcn *wrappedConn) Prepare(query string) (stmt driver.Stmt, err error) {
-	et := wcn.p.databaseEventTracker()
+	return wcn.PrepareContext(context.Background(), query)
+}
+
+func (wcn *wrappedConn) PrepareContext(ctx context.Context, query string) (stmt driver.Stmt, err error) {
+	et := plugin.FromContext(ctx, false, wcn.p)
 	et.SetFingerprint("conn-prepare")
-	et.Set("conn-prepare", query)
+	et.Set("conn-preparectx", query)
 
 	defer func() {
 		if err != nil {
@@ -167,7 +156,7 @@ func (wcn *wrappedConn) Prepare(query string) (stmt driver.Stmt, err error) {
 func (wcn *wrappedConn) Close() (err error) {
 	err = wcn.parent.Close()
 	if err != nil {
-		et := wcn.p.databaseEventTracker()
+		et := plugin.FromContext(nil, false, wcn.p)
 		et.AddError(err)
 		et.SetFingerprint("conn-close")
 		et.Finish()
@@ -184,18 +173,24 @@ func (wcn *wrappedConn) Begin() (tx driver.Tx, err error) {
 func (wcn *wrappedConn) BeginTx(ctx context.Context, opts driver.TxOptions) (tx driver.Tx, err error) {
 	et := plugin.FromContext(ctx, false, wcn.p)
 	et.SetFingerprint("conn-begintx")
-	tx, err = wcn.parent.(driver.ConnBeginTx).BeginTx(plugin.ContextWith(ctx, et), opts)
-	if err != nil {
-		et.AddError(err)
-		et.Finish()
-	} else {
-		tx = &wrappedTx{
-			parent: tx,
-			p:      wcn.p,
-			c:      wcn.c,
+	defer func() {
+		if err != nil {
+			et.AddError(err)
+			et.Finish()
 		}
+	}()
+
+	if parentBeginTx, ok := wcn.parent.(driver.ConnBeginTx); ok {
+		tx, err = parentBeginTx.BeginTx(plugin.ContextWith(ctx, et), opts)
+	} else {
+		tx, err = wcn.parent.Begin()
 	}
-	return
+
+	if err != nil {
+		return nil, err
+	}
+
+	return &wrappedTx{tx, wcn.p, wcn.c}, nil
 }
 
 func (wrs *wrappedRows) Columns() []string {
@@ -203,7 +198,14 @@ func (wrs *wrappedRows) Columns() []string {
 }
 
 func (wrs *wrappedRows) Close() (err error) {
-	panic("not implemented")
+	defer func() {
+		if err != nil {
+			wrs.et.AddError(err)
+		}
+		wrs.et.Finish()
+	}()
+	err = wrs.parent.Close()
+	return
 }
 
 func (wrs *wrappedRows) Next(dest []driver.Value) (err error) {
@@ -240,16 +242,4 @@ func (wrs *wrappedResult) LastInsertId() (id int64, err error) {
 
 func (wrs *wrappedResult) RowsAffected() (n int64, err error) {
 	panic("not implemented")
-}
-
-func (et *databaseEventTrackerImpl) SetQuery(query string) {
-	et.Set(KeyQuery, query)
-}
-
-func (et *databaseEventTrackerImpl) SetParams(params []driver.Value) {
-	et.Set(KeyParams, params)
-}
-
-func (et *databaseEventTrackerImpl) SetNamedParams(params []driver.NamedValue) {
-	et.Set(KeyNamedParams, params)
 }

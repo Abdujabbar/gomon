@@ -34,7 +34,6 @@ Application performance monitoring tool
     * [ ] Memory / Heap usage
     * [ ] Goroutines
 * Monitoring API for custom solutions
-    * [x] Plugin
     * [x] Listener
     * [x] EventTracker
 * Network request monitoring
@@ -50,7 +49,25 @@ Application performance monitoring tool
 
 Every new plugin should implement Plugin interface and register itself in Gomon. In order to listen for events happening inside Plugin implement PluginListener and register it in Gomon
 
+Every new plugin should 
+- create Config structure which implements gomon.TrackerConfig
+- Register its config setter function in gomon so that monitoring can change its configurations in the future
+```
+func init() {
+    gomon.SetConfigFunc(nameOfPlugin, SetConfig)
+}
+
+var defaultConfig = &PluginConfig{}
+
+func SetConfig(conf gomon.TrackerConfig) {
+	if c, ok := conf.(*PluginConfig); ok {
+		defaultConfig = c
+	} else {
+		panic("setting not compatible config")
+	}
+}
+```
+
 * Gomon - main collector and distributor of events
-* Plugin - plugins implementing certain APIs to fill Gomon with data, plugins are global in package scope
-* EventTracker - performance metrics tracker
-* Listener - event listener coming from Gomon
+* EventTracker - performance metrics tracker (simple kv store)
+* Listener - event listener and handler

@@ -4,11 +4,11 @@ import (
 	"net/http"
 	"net/url"
 
-	"github.com/iahmedov/gomon/plugin"
+	"github.com/iahmedov/gomon"
 )
 
 type httpEventTracker interface {
-	plugin.EventTracker
+	gomon.EventTracker
 
 	SetMethod(method string)
 	SetURL(url *url.URL)
@@ -26,7 +26,7 @@ const (
 )
 
 type httpEventTrackerImpl struct {
-	plugin.EventTracker
+	gomon.EventTracker
 }
 
 var _ httpEventTracker = (*httpEventTrackerImpl)(nil)

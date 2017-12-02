@@ -1,69 +1,139 @@
 package gomon
 
 import (
+	"context"
 	"fmt"
+	"os"
 	"sync"
 
-	"github.com/iahmedov/gomon/plugin"
+	"github.com/google/uuid"
 )
 
 func init() {
-	gomon.plugins = map[string]plugin.Plugin{}
-	gomon.listenerFactories = make([]plugin.ListenerFactoryFunc, 0, 3)
-	gomon.listeners = make([]plugin.Listener, 0, 3)
+	gomon.configSetters = map[string]ConfigSetterFunc{}
+	gomon.listenerFactories = make([]ListenerFactoryFunc, 0, 3)
+	gomon.listeners = make([]Listener, 0, 3)
+
+	gomon.applicationScope = newEventTrackerImpl(&gomon)
+	gomon.applicationScope.SetFingerprint("application")
+	gomon.applicationScope.Set("execution-id", uuid.New())
+
+	hostname, err := os.Hostname()
+	if err != nil {
+		panic("could not fetch hostname")
+	}
+	gomon.applicationScope.Set("host", hostname)
+	gomon.applicationScope.Start()
+	gomon.Feed(gomon.applicationScope)
 }
 
 type listenerCreationPack struct {
-	factory plugin.ListenerFactoryFunc
-	config  plugin.ListenerConfig
+	factory ListenerFactoryFunc
+	config  ListenerConfig
 }
 
 type Retransmitter struct {
+	// first sent event is always application scope event
+	applicationScope EventTracker
+
 	listenersMu sync.RWMutex
-	listeners   []plugin.Listener
+	listeners   []Listener
 
 	listenerFactoriesMu sync.RWMutex
-	listenerFactories   []plugin.ListenerFactoryFunc
+	listenerFactories   []ListenerFactoryFunc
 }
 
 type Gomon struct {
 	Retransmitter
 
-	pluginsMu sync.RWMutex
-	plugins   map[string]plugin.Plugin
+	applicationScope EventTracker
+
+	configSettersMu sync.RWMutex
+	configSetters   map[string]ConfigSetterFunc
+
+	configsMu       sync.RWMutex
+	temporalConfigs map[string]TrackerConfig
 }
 
-var _ plugin.Listener = (*Retransmitter)(nil)
+var _ Listener = (*Retransmitter)(nil)
+var _ Listener = (*Gomon)(nil)
 
 var gomon Gomon
 
-func (g *Gomon) AddPlugin(plugin plugin.Plugin) {
-	fmt.Println("plugin is registered", plugin.Name())
-	plugin.SetEventReceiver(g)
-	g.pluginsMu.Lock()
-	defer g.pluginsMu.Unlock()
-	_, has := g.plugins[plugin.Name()]
+func (g *Gomon) SetConfigFunc(name string, fnc ConfigSetterFunc) {
+	fmt.Println("plugin is registered", name)
+	g.configSettersMu.Lock()
+	defer g.configSettersMu.Unlock()
+	_, has := g.configSetters[name]
 	if has {
-		panic(fmt.Sprintf("Plugin with name (%s) already registered", plugin.Name()))
+		panic(fmt.Sprintf("Plugin with name (%s) already registered", fnc))
 	}
-	g.plugins[plugin.Name()] = plugin
+	g.configSetters[name] = fnc
+
+	// set configs initialized earlier if any
+	g.configsMu.Lock()
+	defer g.configsMu.Unlock()
+	tmpConf, ok := g.temporalConfigs[name]
+	if ok {
+		fnc(tmpConf)
+		delete(g.temporalConfigs, name)
+	}
 }
 
-func (g *Retransmitter) Feed(senderPlugin string, et plugin.EventTracker) {
+func (g *Gomon) SetConfig(conf TrackerConfig) {
+	g.configSettersMu.Lock()
+	defer g.configSettersMu.Unlock()
+	setter, has := g.configSetters[conf.Name()]
+	if has {
+		setter(conf)
+		return
+	}
+
+	g.configsMu.Lock()
+	defer g.configsMu.Unlock()
+	g.temporalConfigs[conf.Name()] = conf
+}
+
+func (g *Gomon) newEventTracker() EventTracker {
+	return g.applicationScope.NewChild(false)
+}
+
+func (g *Gomon) FromContext(ctx context.Context, waitParent bool) EventTracker {
+	if ctx == nil {
+		return g.newEventTracker()
+	}
+
+	parent := ctx.Value(eventTrackerKey{}).(EventTracker)
+	if parent != nil {
+		return parent.NewChild(waitParent)
+	}
+
+	return g.newEventTracker()
+}
+
+func (g *Retransmitter) Feed(et EventTracker) {
 	// too dummy for production
 	fmt.Printf("retransmitting... %p\n", g)
+	if g.applicationScope == nil {
+		g.applicationScope = et
+	}
+
 	for _, x := range g.listeners {
-		x.Feed(senderPlugin, et)
+		x.Feed(et)
 	}
 }
 
-func (g *Retransmitter) AddListener(listener plugin.Listener) {
+func (g *Retransmitter) AddListener(listener Listener) {
 	g.listenersMu.Lock()
 	g.listeners = append(g.listeners, listener)
 	g.listenersMu.Unlock()
+
+	if g.applicationScope != nil {
+		listener.Feed(g.applicationScope)
+	}
 }
 
-func (g *Retransmitter) AddListenerFactory(factory plugin.ListenerFactoryFunc, conf plugin.ListenerConfig) {
+func (g *Retransmitter) AddListenerFactory(factory ListenerFactoryFunc, conf ListenerConfig) {
 	fmt.Println("listener is registered")
 	g.listenerFactoriesMu.Lock()
 	g.listenerFactories = append(g.listenerFactories, factory)
@@ -72,14 +142,26 @@ func (g *Retransmitter) AddListenerFactory(factory plugin.ListenerFactoryFunc, c
 	g.AddListener(factory(conf))
 }
 
-func RegisterPlugin(plugin plugin.Plugin) {
-	gomon.AddPlugin(plugin)
-}
-
-func RegisterListenerFactory(factory plugin.ListenerFactoryFunc, conf plugin.ListenerConfig) {
+func RegisterListenerFactory(factory ListenerFactoryFunc, conf ListenerConfig) {
 	gomon.AddListenerFactory(factory, conf)
 }
 
-func RegisterListener(listener plugin.Listener) {
+func RegisterListener(listener Listener) {
 	gomon.AddListener(listener)
+}
+
+func SetConfig(conf TrackerConfig) {
+	gomon.SetConfig(conf)
+}
+
+func SetConfigFunc(name string, fnc ConfigSetterFunc) {
+	gomon.SetConfigFunc(name, fnc)
+}
+
+func FromContext(ctx context.Context, waitParent bool) EventTracker {
+	return gomon.FromContext(ctx, waitParent)
+}
+
+func ContextWith(ctx context.Context, et EventTracker) context.Context {
+	return context.WithValue(ctx, eventTrackerKey{}, et)
 }

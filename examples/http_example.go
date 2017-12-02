@@ -8,7 +8,6 @@ import (
 
 	"github.com/iahmedov/gomon"
 
-	_ "github.com/iahmedov/gomon"
 	httpmon "github.com/iahmedov/gomon/http"
 	"github.com/iahmedov/gomon/listener"
 )
@@ -22,6 +21,7 @@ func main() {
 	retransmitterListener := &gomon.Retransmitter{}
 	retransmitterListener.AddListenerFactory(listener.NewLogListener, nil)
 	gomon.RegisterListener(retransmitterListener)
+	// gomon.SetConfig("http", httpConfig)
 
 	http.HandleFunc("/hello", helloServer)
 	log.Fatal(http.ListenAndServe(":12345", httpmon.MonitoringHandler(nil)))

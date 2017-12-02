@@ -5,11 +5,10 @@ import (
 	"net/http"
 
 	"github.com/iahmedov/gomon"
-	"github.com/iahmedov/gomon/plugin"
 )
 
 func init() {
-	gomon.RegisterPlugin(defaultPlugin)
+	gomon.SetConfigFunc(pluginName, SetConfig)
 }
 
 type PluginConfig struct {
@@ -24,11 +23,11 @@ type PluginConfig struct {
 	RespCode        bool
 }
 
-type wrappedMuxPlugin struct {
+type wrappedMux struct {
 	handler http.Handler
 
 	config   *PluginConfig
-	listener plugin.Listener
+	listener gomon.Listener
 }
 
 type wrappedResponseWriter struct {
@@ -40,7 +39,7 @@ type wrappedResponseWriter struct {
 	responseCode int
 }
 
-var defaultPluginConfig = &PluginConfig{
+var defaultConfig = &PluginConfig{
 	RequestHeaders:  true,
 	RespBody:        true,
 	RespBodyMaxSize: 1024,
@@ -48,20 +47,18 @@ var defaultPluginConfig = &PluginConfig{
 	RespCode:        true,
 }
 
-var _ plugin.Plugin = (*wrappedMuxPlugin)(nil)
-
-var defaultPlugin = &wrappedMuxPlugin{
+var defaultMux = &wrappedMux{
 	handler: nil,
-	config:  defaultPluginConfig,
+	config:  defaultConfig,
 }
 
 var (
 	pluginName           = "gomon/net/http"
 	KeyResponseCode      = pluginName + ":response_code"
 	KeyResponseBody      = pluginName + ":response_body"
-	KeyResponseHeaders   = pluginName + ":response_header"
+	KeyResponseHeaders   = pluginName + ":response_headers"
 	KeyRequestRemoteAddr = pluginName + ":remoteaddr"
-	KeyRequestHeader     = pluginName + ":header"
+	KeyRequestHeader     = pluginName + ":headers"
 	KeyMethod            = pluginName + ":method"
 	KeyProto             = pluginName + ":proto"
 	KeyURL               = pluginName + ":url"
@@ -73,6 +70,14 @@ const (
 	kResponseCodeDoNotSet = -2
 )
 
+func SetConfig(conf gomon.TrackerConfig) {
+	if c, ok := conf.(*PluginConfig); ok {
+		defaultConfig = c
+	} else {
+		panic("setting not compatible config")
+	}
+}
+
 func min(a, b int) int {
 	if a > b {
 		return b
@@ -81,8 +86,12 @@ func min(a, b int) int {
 	}
 }
 
-func (p *wrappedMuxPlugin) incomingRequestTracker(w http.ResponseWriter, r *http.Request) httpEventTracker {
-	tracker := &httpEventTrackerImpl{plugin.NewEventTracker(p)}
+func (p *PluginConfig) Name() string {
+	return pluginName
+}
+
+func (p *wrappedMux) incomingRequestTracker(w http.ResponseWriter, r *http.Request) httpEventTracker {
+	tracker := &httpEventTrackerImpl{gomon.FromContext(nil, false)}
 
 	tracker.SetDirection(kHttpDirectionIncoming)
 	tracker.SetMethod(r.Method)
@@ -99,19 +108,19 @@ func (p *wrappedMuxPlugin) incomingRequestTracker(w http.ResponseWriter, r *http
 	return tracker
 }
 
-func (p *wrappedMuxPlugin) Name() string {
+func (p *wrappedMux) Name() string {
 	return pluginName
 }
 
-func (p *wrappedMuxPlugin) SetEventReceiver(listener plugin.Listener) {
+func (p *wrappedMux) SetEventReceiver(listener gomon.Listener) {
 	p.listener = listener
 }
 
-func (p *wrappedMuxPlugin) HandleTracker(et plugin.EventTracker) {
-	p.listener.Feed(p.Name(), et)
+func (p *wrappedMux) HandleTracker(et gomon.EventTracker) {
+	p.listener.Feed(et)
 }
 
-func (p *wrappedMuxPlugin) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+func (p *wrappedMux) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	tracker := p.incomingRequestTracker(w, r)
 
@@ -123,7 +132,7 @@ func (p *wrappedMuxPlugin) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	p.handler.ServeHTTP(w, r)
 }
 
-func (p *wrappedMuxPlugin) MonitoringHandler(handler http.Handler) http.Handler {
+func (p *wrappedMux) MonitoringHandler(handler http.Handler) http.Handler {
 	if handler == nil {
 		p.handler = http.DefaultServeMux
 	} else {
@@ -132,7 +141,7 @@ func (p *wrappedMuxPlugin) MonitoringHandler(handler http.Handler) http.Handler 
 	return p
 }
 
-func (p *wrappedMuxPlugin) MonitoringWrapper(handler http.HandlerFunc) http.HandlerFunc {
+func (p *wrappedMux) MonitoringWrapper(handler http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 
 		tracker := p.incomingRequestTracker(w, r)
@@ -146,7 +155,7 @@ func (p *wrappedMuxPlugin) MonitoringWrapper(handler http.HandlerFunc) http.Hand
 	}
 }
 
-func monitoredResponseWriter(w http.ResponseWriter, config *PluginConfig, et plugin.EventTracker) http.ResponseWriter {
+func monitoredResponseWriter(w http.ResponseWriter, config *PluginConfig, et gomon.EventTracker) http.ResponseWriter {
 	wr := &wrappedResponseWriter{
 		ResponseWriter: w,
 		tracker:        &httpEventTrackerImpl{et},
@@ -200,9 +209,9 @@ func (r *wrappedResponseWriter) WriteHeader(code int) {
 }
 
 func MonitoringHandler(handler http.Handler) http.Handler {
-	return defaultPlugin.MonitoringHandler(handler)
+	return defaultMux.MonitoringHandler(handler)
 }
 
 func MonitoringWrapper(handler http.HandlerFunc) http.HandlerFunc {
-	return defaultPlugin.MonitoringWrapper(handler)
+	return defaultMux.MonitoringWrapper(handler)
 }
