@@ -165,3 +165,7 @@ func FromContext(ctx context.Context) EventTracker {
 func ContextWith(ctx context.Context, et EventTracker) context.Context {
 	return context.WithValue(ctx, eventTrackerKey{}, et)
 }
+
+func HasTracker(ctx context.Context) bool {
+	return ctx.Value(eventTrackerKey{}) != nil
+}
