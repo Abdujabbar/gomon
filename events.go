@@ -80,10 +80,11 @@ func (e *eventTrackerImpl) Start() {
 
 func (e *eventTrackerImpl) Finish() {
 	e.lapsed = time.Since(e.start)
-	e.Set(KeyStart, e.start.UTC().UnixNano())
-	e.Set(KeyLapsed, e.lapsed)
+	if !e.start.IsZero() {
+		e.Set(KeyStart, e.start.UTC().UnixNano())
+		e.Set(KeyLapsed, e.lapsed)
+	}
 
-	fmt.Printf("parent = %s\n", e.parent)
 	if e.parent != nil && e.listener != nil {
 		e.listener.Feed(e)
 	}

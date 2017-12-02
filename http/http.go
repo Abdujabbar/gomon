@@ -91,7 +91,7 @@ func (p *PluginConfig) Name() string {
 }
 
 func (p *wrappedMux) incomingRequestTracker(w http.ResponseWriter, r *http.Request) httpEventTracker {
-	tracker := &httpEventTrackerImpl{gomon.FromContext(nil, false)}
+	tracker := &httpEventTrackerImpl{gomon.FromContext(nil).NewChild(false)}
 
 	tracker.SetDirection(kHttpDirectionIncoming)
 	tracker.SetMethod(r.Method)
@@ -125,7 +125,7 @@ func (p *wrappedMux) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	tracker := p.incomingRequestTracker(w, r)
 
 	w = monitoredResponseWriter(w, p.config, tracker)
-	tracker.SetFingerprint("mux-servehttp")
+	tracker.SetFingerprint("http-wmux-servehttp")
 	tracker.Start()
 	defer tracker.Finish()
 
@@ -147,7 +147,7 @@ func (p *wrappedMux) MonitoringWrapper(handler http.HandlerFunc) http.HandlerFun
 		tracker := p.incomingRequestTracker(w, r)
 
 		w = monitoredResponseWriter(w, p.config, tracker)
-		tracker.SetFingerprint("mux-handler")
+		tracker.SetFingerprint("http-wmux-handler")
 		tracker.Start()
 		defer tracker.Finish()
 

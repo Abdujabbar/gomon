@@ -98,17 +98,17 @@ func (g *Gomon) newEventTracker() EventTracker {
 	return g.applicationScope.NewChild(false)
 }
 
-func (g *Gomon) FromContext(ctx context.Context, waitParent bool) EventTracker {
+func (g *Gomon) FromContext(ctx context.Context) EventTracker {
 	if ctx == nil {
-		return g.newEventTracker()
+		return g.applicationScope
 	}
 
 	parent := ctx.Value(eventTrackerKey{}).(EventTracker)
 	if parent != nil {
-		return parent.NewChild(waitParent)
+		return parent
 	}
 
-	return g.newEventTracker()
+	return g.applicationScope
 }
 
 func (g *Retransmitter) Feed(et EventTracker) {
@@ -158,8 +158,8 @@ func SetConfigFunc(name string, fnc ConfigSetterFunc) {
 	gomon.SetConfigFunc(name, fnc)
 }
 
-func FromContext(ctx context.Context, waitParent bool) EventTracker {
-	return gomon.FromContext(ctx, waitParent)
+func FromContext(ctx context.Context) EventTracker {
+	return gomon.FromContext(ctx)
 }
 
 func ContextWith(ctx context.Context, et EventTracker) context.Context {
