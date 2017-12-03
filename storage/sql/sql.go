@@ -4,6 +4,7 @@ import (
 	"context"
 	stdsql "database/sql"
 	"database/sql/driver"
+	"errors"
 
 	"github.com/iahmedov/gomon"
 )
@@ -31,9 +32,10 @@ type wrappedRows struct {
 }
 
 type wrappedStmt struct {
-	// TODO: since database/sql makes it impossible to know
-	// whether stmt is from transaction or connection, we need
-	// to store last created transaction in wrappedConn, so that
+	// TODO: since database/sql makes it almost impossible
+	// to know whether stmt is from transaction
+	// or connection, we need to store last
+	// created transaction in wrappedConn, so that
 	// we can create parent/child relationship
 	// between Tx/Stmt and Conn/Stmt
 	parent driver.Stmt
@@ -56,10 +58,21 @@ type wrappedResult struct {
 var _ driver.Driver = (*wrappedDriver)(nil)
 
 var _ driver.Conn = (*wrappedConn)(nil)
+var _ driver.Pinger = (*wrappedConn)(nil)
+var _ driver.Queryer = (*wrappedConn)(nil)
+var _ driver.QueryerContext = (*wrappedConn)(nil)
 var _ driver.ConnBeginTx = (*wrappedConn)(nil)
 var _ driver.ConnPrepareContext = (*wrappedConn)(nil)
 
 var _ driver.Rows = (*wrappedRows)(nil)
+
+// var _ driver.RowsColumnTypeDatabaseTypeName = (*wrappedRows)(nil)
+// var _ driver.RowsColumnTypeLength = (*wrappedRows)(nil)
+// var _ driver.RowsColumnTypeNullable = (*wrappedRows)(nil)
+// var _ driver.RowsColumnTypePrecisionScale = (*wrappedRows)(nil)
+// var _ driver.RowsColumnTypeScanType = (*wrappedRows)(nil)
+// var _ driver.RowsNextResultSet = (*wrappedRows)(nil)
+
 var _ driver.Stmt = (*wrappedStmt)(nil)
 var _ driver.StmtExecContext = (*wrappedStmt)(nil)
 var _ driver.StmtQueryContext = (*wrappedStmt)(nil)
@@ -97,15 +110,87 @@ func (wdr *wrappedDriver) Open(name string) (conn driver.Conn, err error) {
 	}()
 
 	conn, err = wdr.parent.Open(name)
-	if err != nil {
+	if err == nil {
+		et := gomon.FromContext(nil).NewChild(false)
+		et.SetFingerprint("sql-wconn")
 		conn = &wrappedConn{
 			parent: conn,
 			c:      wdr.c,
-			et:     gomon.FromContext(nil).NewChild(false),
+			et:     et,
 		}
 	} else {
 		conn = nil
 	}
+	return
+}
+
+func (wcn *wrappedConn) Ping(ctx context.Context) (err error) {
+	if pinger, ok := wcn.parent.(driver.Pinger); ok {
+		err = pinger.Ping(ctx)
+	} else {
+		err = driver.ErrSkip
+	}
+
+	return
+}
+
+func (wcn *wrappedConn) Query(query string, args []driver.Value) (rows driver.Rows, err error) {
+	et := wcn.et.NewChild(false)
+	et.SetFingerprint("sql-wconn-query")
+	defer func() {
+		if err != nil {
+			et.AddError(err)
+		}
+		et.Finish()
+	}()
+	if queryer, ok := wcn.parent.(driver.Queryer); ok {
+		rows, err = queryer.Query(query, args)
+	} else {
+		rows, err = nil, driver.ErrSkip
+	}
+
+	if err == nil {
+		et := et.NewChild(false)
+		et.SetFingerprint("sql-wrows")
+		rows = &wrappedRows{
+			parent: rows,
+			c:      wcn.c,
+			et:     et,
+		}
+	} else {
+		rows = nil
+	}
+
+	return
+}
+
+func (wcn *wrappedConn) QueryContext(ctx context.Context, query string, args []driver.NamedValue) (rows driver.Rows, err error) {
+	et := wcn.et.NewChild(false)
+	et.SetFingerprint("sql-wconn-queryctx")
+	defer func() {
+		if err != nil {
+			et.AddError(err)
+		}
+		et.Finish()
+	}()
+	if queryer, ok := wcn.parent.(driver.QueryerContext); ok {
+		rows, err = queryer.QueryContext(ctx, query, args)
+	} else {
+		rows, err = nil, driver.ErrSkip
+	}
+
+	if err == nil {
+		et := et.NewChild(false)
+		et.SetFingerprint("sql-wrows")
+		rows = &wrappedRows{
+			parent: rows,
+			c:      wcn.c,
+			et:     et,
+		}
+	} else {
+		rows = nil
+	}
+
 	return
 }
 
@@ -210,9 +295,12 @@ func (wrs *wrappedRows) Next(dest []driver.Value) (err error) {
 		et.AddError(err)
 		et.Finish()
 	} else {
-		rows := wrs.et.Get("rows").([][]driver.Value)
-		if rows == nil {
+		v := wrs.et.Get("rows")
+		var rows [][]driver.Value
+		if v == nil {
 			rows = make([][]driver.Value, 0, wrs.c.MaxRows)
+		} else {
+			rows = v.([][]driver.Value)
 		}
 
 		if len(rows) < cap(rows) {
@@ -221,6 +309,34 @@ func (wrs *wrappedRows) Next(dest []driver.Value) (err error) {
 		wrs.et.Set("rows", rows)
 	}
 	return
+}
+
+// func (wrs *wrappedRows) HasNextResultSet() bool {
+// 	if nextResultSet, ok := wrs.parent.(driver.RowsNextResultSet); ok {
+// 		return nextResultSet.HasNextResultSet()
+// 	} else {
+// 		return false
+// 	}
+// }
+
+// func (wrs *wrappedRows) NextResultSet() (err error) {
+// 	if nextResultSet, ok := wrs.parent.(driver.RowsNextResultSet); ok {
+// 		return nextResultSet.NextResultSet()
+// 	} else {
+// 		return driver.ErrSkip
+// 	}
+// }
+
+// copied from database/sql
+func namedValueToValue(named []driver.NamedValue) ([]driver.Value, error) {
+	dargs := make([]driver.Value, len(named))
+	for n, param := range named {
+		if len(param.Name) > 0 {
+			return nil, errors.New("sql: driver does not support the use of Named Parameters")
+		}
+		dargs[n] = param.Value
+	}
+	return dargs, nil
 }
 
 func (wst *wrappedStmt) Close() (err error) {
@@ -242,7 +358,6 @@ func (wst *wrappedStmt) NumInput() int {
 func (wst *wrappedStmt) Exec(args []driver.Value) (res driver.Result, err error) {
 	et := wst.et.NewChild(false)
 	et.SetFingerprint("sql-wstmt-exec")
-	et.Start()
 
 	res, err = wst.parent.Exec(args)
 
@@ -272,13 +387,16 @@ func (wst *wrappedStmt) Exec(args []driver.Value) (res driver.Result, err error)
 func (wst *wrappedStmt) ExecContext(ctx context.Context, args []driver.NamedValue) (res driver.Result, err error) {
 	et := wst.et.NewChild(false)
 	et.SetFingerprint("sql-wstmt-execctx")
-	et.Start()
 
 	if parentExecCtx, ok := wst.parent.(driver.StmtExecContext); ok {
 		res, err = parentExecCtx.ExecContext(ctx, args)
 	} else {
-		// not sure about handling column names and positions yet
-		res, err = nil, driver.ErrSkip
+		vals, errVal := namedValueToValue(args)
+		if errVal != nil {
+			err = errVal
+		} else {
+			res, err = wst.parent.Exec(vals)
+		}
 	}
 
 	if err != nil {
@@ -307,7 +425,10 @@ func (wst *wrappedStmt) ExecContext(ctx context.Context, args []driver.NamedValu
 func (wst *wrappedStmt) Query(args []driver.Value) (rows driver.Rows, err error) {
 	et := wst.et.NewChild(false)
 	et.SetFingerprint("sql-wstmt-query")
-	et.Start()
+	// NOTE: this creates double entry in database
+	// 1. for query execution time
+	// 2. after rows.Close() called
+	defer et.Finish()
 
 	rows, err = wst.parent.Query(args)
 
@@ -320,23 +441,27 @@ func (wst *wrappedStmt) Query(args []driver.Value) (rows driver.Rows, err error)
 			et:     et,
 		}
 	}
-	// NOTE: this creates double entry in database
-	// 1. for query execution time
-	// 2. after rows.Close() called
-	et.Finish()
 	return
 }
 
 func (wst *wrappedStmt) QueryContext(ctx context.Context, args []driver.NamedValue) (rows driver.Rows, err error) {
 	et := wst.et.NewChild(false)
 	et.SetFingerprint("sql-wstmt-queryctx")
-	et.Start()
+
+	// NOTE: this creates double entry in database
+	// 1. for query execution time
+	// 2. after rows.Close() called (with data)
+	defer et.Finish()
 
 	if parentQueryCtx, ok := wst.parent.(driver.StmtQueryContext); ok {
 		rows, err = parentQueryCtx.QueryContext(ctx, args)
 	} else {
-		// not sure about handling column names and positions yet
-		rows, err = nil, driver.ErrSkip
+		vals, errVal := namedValueToValue(args)
+		if errVal != nil {
+			err = errVal
+		} else {
+			rows, err = wst.parent.Query(vals)
+		}
 	}
 
 	if err != nil {
@@ -348,10 +473,6 @@ func (wst *wrappedStmt) QueryContext(ctx context.Context, args []driver.NamedVal
 			et:     et,
 		}
 	}
-	// NOTE: this creates double entry in database
-	// 1. for query execution time
-	// 2. after rows.Close() called (with data)
-	et.Finish()
 	return
 }
 

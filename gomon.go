@@ -23,8 +23,6 @@ func init() {
 		panic("could not fetch hostname")
 	}
 	gomon.applicationScope.Set("host", hostname)
-	gomon.applicationScope.Start()
-	gomon.Feed(gomon.applicationScope)
 }
 
 type listenerCreationPack struct {
@@ -46,7 +44,8 @@ type Retransmitter struct {
 type Gomon struct {
 	Retransmitter
 
-	applicationScope EventTracker
+	started          bool
+	applicationScope *eventTrackerImpl
 
 	configSettersMu sync.RWMutex
 	configSetters   map[string]ConfigSetterFunc
@@ -59,6 +58,18 @@ var _ Listener = (*Retransmitter)(nil)
 var _ Listener = (*Gomon)(nil)
 
 var gomon Gomon
+
+func (g *Gomon) Start() {
+	g.started = true
+	if g.applicationScope.appID == nil {
+		g.applicationScope.SetAppID(uuid.New().String())
+	}
+	g.Feed(g.applicationScope)
+}
+
+func (g *Gomon) SetApplicationID(identifier string) {
+	g.applicationScope.SetAppID(identifier)
+}
 
 func (g *Gomon) SetConfigFunc(name string, fnc ConfigSetterFunc) {
 	fmt.Println("plugin is registered", name)
@@ -111,9 +122,17 @@ func (g *Gomon) FromContext(ctx context.Context) EventTracker {
 	return g.applicationScope
 }
 
+func (g *Gomon) Feed(et EventTracker) {
+	if !g.started {
+		panic("monitoring not started but received event")
+	} else {
+		g.Retransmitter.Feed(et)
+	}
+}
+
 func (g *Retransmitter) Feed(et EventTracker) {
 	// too dummy for production
-	fmt.Printf("retransmitting... %p\n", g)
+	// fmt.Printf("retransmitting... %p\n", g)
 	if g.applicationScope == nil {
 		g.applicationScope = et
 	}
@@ -142,6 +161,10 @@ func (g *Retransmitter) AddListenerFactory(factory ListenerFactoryFunc, conf Lis
 	g.AddListener(factory(conf))
 }
 
+func AddListenerFactory(factory ListenerFactoryFunc, conf ListenerConfig) {
+	gomon.AddListenerFactory(factory, conf)
+}
+
 func RegisterListenerFactory(factory ListenerFactoryFunc, conf ListenerConfig) {
 	gomon.AddListenerFactory(factory, conf)
 }
@@ -168,4 +191,12 @@ func ContextWith(ctx context.Context, et EventTracker) context.Context {
 
 func HasTracker(ctx context.Context) bool {
 	return ctx.Value(eventTrackerKey{}) != nil
+}
+
+func Start() {
+	gomon.Start()
+}
+
+func SetApplicationID(identifier string) {
+	gomon.SetApplicationID(identifier)
 }

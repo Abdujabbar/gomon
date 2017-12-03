@@ -22,8 +22,9 @@ type TrackerConfig interface {
 
 type EventTracker interface {
 	ID() uuid.UUID
+	SetAppID(identifier string)
+	AppID() string
 	Parent() *uuid.UUID
-	Start()
 	Finish()
 	Lapsed() time.Duration
 
@@ -49,6 +50,7 @@ type eventTrackerImpl struct {
 	children []EventTracker
 
 	listener Listener
+	appID    *string
 }
 
 type ListenerFactoryFunc func(ListenerConfig) Listener
@@ -68,6 +70,14 @@ var (
 
 func (e *eventTrackerImpl) ID() uuid.UUID {
 	return e.uuid
+}
+
+func (e *eventTrackerImpl) SetAppID(identifier string) {
+	e.appID = &identifier
+}
+
+func (e *eventTrackerImpl) AppID() string {
+	return *e.appID
 }
 
 func (e *eventTrackerImpl) Parent() *uuid.UUID {
@@ -131,6 +141,7 @@ func (e *eventTrackerImpl) AddChild(et EventTracker) {
 
 func (e *eventTrackerImpl) NewChild(waitParent bool) EventTracker {
 	child := newEventTrackerImpl(e.listener)
+	child.appID = e.appID
 	if waitParent {
 		e.AddChild(child)
 	} else {
@@ -148,12 +159,13 @@ func (e *eventTrackerImpl) String() string {
 	if err != nil {
 		panic(fmt.Sprintf("couldnot Marshal KV: %s\n", e.kv))
 	}
-	return fmt.Sprintf("id: (%s), parent: (%s), start: (%s), lapsed: (%s), values: %s", e.uuid, e.parent, e.start, e.lapsed, jskv)
+	return fmt.Sprintf("id: (%s), parent: (%s), app: (%s), start: (%s), lapsed: (%s), values: %s", e.uuid, e.parent, e.AppID(), e.start, e.lapsed, jskv)
 }
 
 func newEventTrackerImpl(listener Listener) *eventTrackerImpl {
 	return &eventTrackerImpl{
 		uuid:     uuid.New(),
+		start:    time.Now(),
 		kv:       make(map[string]interface{}),
 		parent:   nil,
 		children: make([]EventTracker, 0),

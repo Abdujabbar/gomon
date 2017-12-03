@@ -17,10 +17,13 @@ func helloServer(w http.ResponseWriter, req *http.Request) {
 	io.WriteString(w, "hello, world!\n")
 }
 
-func main() {
+// change main until we create tests for this plugin
+// or think about using tests from net/http
+func main__() {
 	retransmitterListener := &gomon.Retransmitter{}
 	retransmitterListener.AddListenerFactory(listener.NewLogListener, nil)
 	gomon.RegisterListener(retransmitterListener)
+	gomon.Start()
 	// gomon.SetConfig("http", httpConfig)
 
 	http.HandleFunc("/hello", helloServer)

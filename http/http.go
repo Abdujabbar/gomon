@@ -126,7 +126,6 @@ func (p *wrappedMux) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	w = monitoredResponseWriter(w, p.config, tracker)
 	tracker.SetFingerprint("http-wmux-servehttp")
-	tracker.Start()
 	defer tracker.Finish()
 
 	p.handler.ServeHTTP(w, r)
@@ -148,7 +147,6 @@ func (p *wrappedMux) MonitoringWrapper(handler http.HandlerFunc) http.HandlerFun
 
 		w = monitoredResponseWriter(w, p.config, tracker)
 		tracker.SetFingerprint("http-wmux-handler")
-		tracker.Start()
 		defer tracker.Finish()
 
 		handler(w, r)

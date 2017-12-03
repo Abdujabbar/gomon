@@ -26,7 +26,7 @@ Application performance monitoring tool
     * [ ] martini (?) [https://github.com/go-martini/martini]
 * Database query performance monitoring
     * [ ] Wrapper around database/sql
-    * [ ] Wrapper around Database driver
+    * [x] Wrapper around Database driver
     * [ ] Wrapper for popular ORM (?)
     * [ ] NoSQL drivers
 * Runtime monitoring
