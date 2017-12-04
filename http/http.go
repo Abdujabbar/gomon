@@ -54,15 +54,15 @@ var defaultMux = &wrappedMux{
 
 var (
 	pluginName           = "gomon/net/http"
-	KeyResponseCode      = pluginName + ":response_code"
-	KeyResponseBody      = pluginName + ":response_body"
-	KeyResponseHeaders   = pluginName + ":response_headers"
-	KeyRequestRemoteAddr = pluginName + ":remoteaddr"
-	KeyRequestHeader     = pluginName + ":headers"
-	KeyMethod            = pluginName + ":method"
-	KeyProto             = pluginName + ":proto"
-	KeyURL               = pluginName + ":url"
-	KeyDirection         = pluginName + ":direction"
+	KeyResponseCode      = "response_code"
+	KeyResponseBody      = "response_body"
+	KeyResponseHeaders   = "response_headers"
+	KeyRequestRemoteAddr = "remoteaddr"
+	KeyRequestHeader     = "headers"
+	KeyMethod            = "method"
+	KeyProto             = "proto"
+	KeyURL               = "url"
+	KeyDirection         = "direction"
 )
 
 const (

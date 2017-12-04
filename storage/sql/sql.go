@@ -86,9 +86,9 @@ var defaultConfig = &PluginConfig{
 
 var (
 	pluginName     = "gomon/sql"
-	KeyQuery       = pluginName + ":query"
-	KeyParams      = pluginName + ":params"
-	KeyNamedParams = pluginName + ":named_params"
+	KeyQuery       = "query"
+	KeyParams      = "params"
+	KeyNamedParams = "named_params"
 )
 
 func MonitoringDriver(d driver.Driver) driver.Driver {
