@@ -14,7 +14,7 @@ import (
 	"github.com/lib/pq"
 )
 
-func main() {
+func main__sql() {
 	dsn := os.Getenv("DSN")
 	if len(dsn) == 0 {
 		panic("DSN not set")
