@@ -90,22 +90,26 @@ func (p *PluginConfig) Name() string {
 	return pluginName
 }
 
-func (p *wrappedMux) incomingRequestTracker(w http.ResponseWriter, r *http.Request) httpEventTracker {
+func IncomingRequestTracker(w http.ResponseWriter, r *http.Request, config *PluginConfig) httpEventTracker {
 	tracker := &httpEventTrackerImpl{gomon.FromContext(nil).NewChild(false)}
 
 	tracker.SetDirection(kHttpDirectionIncoming)
 	tracker.SetMethod(r.Method)
 	tracker.SetURL(r.URL)
 	tracker.SetProto(r.Proto)
-	if p.config.RequestHeaders {
+	if config.RequestHeaders {
 		tracker.SetRequestHeaders(r.Header)
 	}
 
-	if p.config.RequestRemoteAddr {
+	if config.RequestRemoteAddr {
 		tracker.SetRequestRemoteAddress(r.RemoteAddr)
 	}
 
 	return tracker
+}
+
+func (p *wrappedMux) incomingRequestTracker(w http.ResponseWriter, r *http.Request) httpEventTracker {
+	return IncomingRequestTracker(w, r, p.config)
 }
 
 func (p *wrappedMux) Name() string {

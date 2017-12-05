@@ -13,6 +13,7 @@ import (
 	_ "net/http/pprof"
 
 	"github.com/iahmedov/gomon"
+	"github.com/iahmedov/gomon/listener"
 	"github.com/iahmedov/gomon/runtime"
 )
 
@@ -29,7 +30,7 @@ func js() {
 }
 
 func main() {
-	// gomon.AddListenerFactory(listener.NewLogListener, nil)
+	gomon.AddListenerFactory(listener.NewLogListener, nil)
 	gomon.Start()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -51,11 +52,15 @@ func main() {
 	go func() {
 		http.ListenAndServe(":6066", nil)
 	}()
-	select {
-	case <-time.After(time.Second * 600):
-		cancel()
-		return
-	case <-cleanupDone:
-		return
+	for {
+		select {
+		case <-time.After(time.Second * 6):
+			gomon.Toggle()
+		case <-time.After(time.Second * 600):
+			cancel()
+			return
+		case <-cleanupDone:
+			return
+		}
 	}
 }

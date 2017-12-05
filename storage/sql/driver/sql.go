@@ -1,8 +1,8 @@
-package sql
+package driver
 
 import (
 	"context"
-	stdsql "database/sql"
+	"database/sql"
 	"database/sql/driver"
 	"errors"
 
@@ -239,7 +239,7 @@ func (wcn *wrappedConn) Close() (err error) {
 
 func (wcn *wrappedConn) Begin() (tx driver.Tx, err error) {
 	// return nil, driver.ErrSkip
-	isolation := driver.IsolationLevel(stdsql.LevelDefault)
+	isolation := driver.IsolationLevel(sql.LevelDefault)
 	return wcn.BeginTx(context.Background(), driver.TxOptions{isolation, false})
 }
 

@@ -23,14 +23,12 @@ type TrackerConfig interface {
 type EventTracker interface {
 	ID() uuid.UUID
 	SetAppID(identifier string)
-	AppID() string
+	AppID() *string
 	Parent() *uuid.UUID
 	Finish()
 	Lapsed() time.Duration
 
 	SetFingerprint(fingerprint string)
-	SetError(err error)
-	SetErrors(err []error)
 	AddError(err error)
 
 	Set(key string, value interface{})
@@ -65,7 +63,7 @@ var (
 	KeyStart       = prefix + "start"
 	KeyLapsed      = prefix + "lapsed"
 	KeyFingerprint = prefix + "fp"
-	KeyErrors      = prefix + "error"
+	KeyErrors      = "error"
 )
 
 func (e *eventTrackerImpl) ID() uuid.UUID {
@@ -76,8 +74,8 @@ func (e *eventTrackerImpl) SetAppID(identifier string) {
 	e.appID = &identifier
 }
 
-func (e *eventTrackerImpl) AppID() string {
-	return *e.appID
+func (e *eventTrackerImpl) AppID() *string {
+	return e.appID
 }
 
 func (e *eventTrackerImpl) Parent() *uuid.UUID {
@@ -108,14 +106,6 @@ func (e *eventTrackerImpl) SetFingerprint(fingerprint string) {
 	e.Set(KeyFingerprint, fingerprint)
 }
 
-func (e *eventTrackerImpl) SetError(err error) {
-	e.Set(KeyErrors, []error{err})
-}
-
-func (e *eventTrackerImpl) SetErrors(errs []error) {
-	e.Set(KeyErrors, errs)
-}
-
 func (e *eventTrackerImpl) AddError(err error) {
 	errs, ok := e.Get(KeyErrors).([]error)
 	if ok {
@@ -124,7 +114,7 @@ func (e *eventTrackerImpl) AddError(err error) {
 		errs = []error{err}
 	}
 
-	e.SetErrors(errs)
+	e.Set(KeyErrors, errs)
 }
 
 func (e *eventTrackerImpl) Set(key string, value interface{}) {

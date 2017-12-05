@@ -10,7 +10,7 @@ import (
 
 	"github.com/iahmedov/gomon"
 	"github.com/iahmedov/gomon/listener"
-	gomonsql "github.com/iahmedov/gomon/storage/sql"
+	driver "github.com/iahmedov/gomon/storage/sql/driver"
 	"github.com/lib/pq"
 )
 
@@ -23,7 +23,7 @@ func main__sql() {
 	gomon.SetApplicationID("sql-example")
 	gomon.Start()
 
-	sql.Register("monitored-postgres", gomonsql.MonitoringDriver(&pq.Driver{}))
+	sql.Register("monitored-postgres", driver.MonitoringDriver(&pq.Driver{}))
 
 	db, err := sql.Open("monitored-postgres", dsn)
 	if err != nil {
@@ -42,7 +42,6 @@ func main__sql() {
 	var lang string
 	for rows.Next() {
 		rows.Scan(&tid, &lang)
-		fmt.Println(tid, lang)
 	}
 
 	//////////

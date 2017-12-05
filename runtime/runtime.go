@@ -2,8 +2,10 @@ package runtime
 
 import (
 	"context"
+	"fmt"
 	"runtime"
-	"runtime/debug"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -14,9 +16,14 @@ func init() {
 	gomon.SetConfigFunc(pluginName, SetConfig)
 }
 
+type MemProfileOrder int
+
 type PluginConfig struct {
+	MemStatInterval    time.Duration
 	MemProfileInterval time.Duration
-	GSStatInterval     time.Duration
+	MemProfileLimit    int
+	MemProfileOrderBy  MemProfileOrder
+	MemProfileOrderAsc bool
 }
 
 type runtimeMetricCollector struct {
@@ -27,10 +34,35 @@ type runtimeMetricCollector struct {
 	lastMemStat   runtime.MemStats
 }
 
-var defaultConfig = &PluginConfig{
-	MemProfileInterval: time.Second * 5,
-	GSStatInterval:     time.Second * 2,
+type memProfileSorter struct {
+	items     []runtime.MemProfileRecord
+	order     MemProfileOrder
+	ascending bool
 }
+
+type memProfileData struct {
+	allocBytes, freeBytes     int64 // number of bytes allocated, freed
+	allocObjects, freeObjects int64 // number of objects allocated, freed
+	stack                     []string
+}
+
+const (
+	MemProfileOrderMemAllocation MemProfileOrder = iota
+	MemProfileOrderMemFree
+	MemProfileOrderAllocObjCount
+	MemProfileOrderFreeObjCount
+	MemProfileOrderActiveMem
+	MemProfileOrderActiveObj
+)
+
+var defaultConfig = &PluginConfig{
+	MemStatInterval:    time.Second * 5,
+	MemProfileInterval: time.Second * 5,
+	MemProfileLimit:    5,
+	MemProfileOrderBy:  MemProfileOrderMemAllocation,
+	MemProfileOrderAsc: false,
+}
+
 var runtimeCollector = &runtimeMetricCollector{
 	config:         *defaultConfig,
 	configReloader: make(chan struct{}, 1),
@@ -54,41 +86,104 @@ func (p *PluginConfig) Name() string {
 func (c *runtimeMetricCollector) Run(ctx context.Context) {
 	c.collectBaseInformation()
 	go func() {
-		var memProfileTick, gsstatTick = time.Tick(c.config.MemProfileInterval), time.Tick(c.config.GSStatInterval)
+		var memStatTick = time.Tick(c.config.MemStatInterval)
+		var memProfileTick = time.Tick(c.config.MemProfileInterval)
+		var memProfileOrder = c.config.MemProfileOrderBy
+		var memProfileAsc = c.config.MemProfileOrderAsc
+		var memProfileLimit = c.config.MemProfileLimit
 		for {
 			select {
 			case <-ctx.Done():
 				return
 			case <-c.configReloader:
+				memProfileTick = time.Tick(c.config.MemStatInterval)
 				memProfileTick = time.Tick(c.config.MemProfileInterval)
-				gsstatTick = time.Tick(c.config.GSStatInterval)
-			case <-memProfileTick:
+				memProfileOrder = c.config.MemProfileOrderBy
+				memProfileAsc = c.config.MemProfileOrderAsc
+				memProfileLimit = c.config.MemProfileLimit
+			case <-memStatTick:
 				c.collectMemStats()
-			case <-gsstatTick:
-				// c.collectGCStats()
+			case <-memProfileTick:
+				c.collectMemProfile(memProfileOrder, memProfileLimit, memProfileAsc)
 			}
 		}
 	}()
 }
 
 func (c *runtimeMetricCollector) ReloadConf() {
-	c.configReloader <- struct{}{}
+	select {
+	default:
+	case c.configReloader <- struct{}{}:
+	}
 }
 
-func (c *runtimeMetricCollector) collectGCStats() {
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
 
+func (c *runtimeMetricCollector) collectMemProfile(order MemProfileOrder, limit int, asc bool) {
 	et := gomon.FromContext(nil).NewChild(false)
+	et.SetFingerprint("rt-collect-memprof")
 	defer et.Finish()
-	var stats debug.GCStats
-	debug.ReadGCStats(&stats)
+	n, _ := runtime.MemProfile(nil, true)
+	if n == 0 {
+		return
+	}
 
-	// fmt.Printf("last collect: %t, %s\n", stats.LastGC.IsZero(), stats.LastGC)
+	p := make([]runtime.MemProfileRecord, n)
+	n, ok := runtime.MemProfile(p, true)
+	if !ok {
+		return
+	}
+
+	sort.Sort(memProfileSorter{p, order, asc})
+	p = p[:min(len(p), limit)]
+
+	funcCache := make(map[uintptr]string)
+	_ = funcCache
+
+	memData := make([]*memProfileData, 0, len(p))
+	for _, rec := range p {
+		stack := make([]string, 0, 5)
+		for _, funcPc := range rec.Stack0 {
+			if funcPc == 0 {
+				break
+			}
+
+			if s, ok := funcCache[funcPc]; ok {
+				stack = append(stack, s)
+			} else {
+				fnc := runtime.FuncForPC(funcPc)
+				fl, ln := fnc.FileLine(funcPc)
+				s = fmt.Sprintf("[%s]:[%d] [%s]", fl, ln, fnc.Name())
+				funcCache[funcPc] = s
+				stack = append(stack, s)
+			}
+		}
+
+		memData = append(memData, &memProfileData{
+			allocBytes:   rec.AllocBytes,
+			allocObjects: rec.AllocObjects,
+			freeBytes:    rec.FreeBytes,
+			freeObjects:  rec.FreeObjects,
+			stack:        stack,
+		})
+	}
+
+	topRecords := make([]map[string]interface{}, 0, len(memData))
+	for _, m := range memData {
+		topRecords = append(topRecords, m.KVData())
+	}
+	et.Set("mem-profile", topRecords)
 }
 
 func (c *runtimeMetricCollector) collectMemStats() {
 	et := gomon.FromContext(nil).NewChild(false)
 	defer et.Finish()
-	et.SetFingerprint("rt-collect-mem")
+	et.SetFingerprint("rt-collect-memstat")
 	var m runtime.MemStats
 	runtime.ReadMemStats(&m)
 	fillMemStat(&m, et)
@@ -159,4 +254,57 @@ func (c *runtimeMetricCollector) collectBaseInformation() {
 
 func Run(ctx context.Context) {
 	runtimeCollector.Run(ctx)
+}
+
+func opAsc(a, b int64) bool {
+	return a < b
+}
+
+func opDesc(a, b int64) bool {
+	return a > b
+}
+
+func (m memProfileSorter) Len() int      { return len(m.items) }
+func (m memProfileSorter) Swap(i, j int) { m.items[i], m.items[j] = m.items[j], m.items[i] }
+func (m memProfileSorter) Less(i, j int) bool {
+	var op func(a, b int64) bool
+	if m.ascending {
+		op = opAsc
+	} else {
+		op = opDesc
+	}
+	switch m.order {
+	case MemProfileOrderMemAllocation:
+		return op(m.items[i].AllocBytes, m.items[j].AllocBytes)
+	case MemProfileOrderMemFree:
+		return op(m.items[i].FreeBytes, m.items[j].FreeBytes)
+	case MemProfileOrderAllocObjCount:
+		return op(m.items[i].AllocObjects, m.items[j].AllocObjects)
+	case MemProfileOrderFreeObjCount:
+		return op(m.items[i].FreeObjects, m.items[j].FreeObjects)
+	case MemProfileOrderActiveMem:
+		return op(m.items[i].InUseBytes(), m.items[j].InUseBytes())
+	case MemProfileOrderActiveObj:
+		return op(m.items[i].InUseObjects(), m.items[j].InUseObjects())
+	}
+
+	return op(m.items[i].AllocBytes, m.items[j].AllocBytes)
+}
+
+func (m *memProfileData) KVData() map[string]interface{} {
+	mp := make(map[string]interface{})
+
+	mp["alloc_bytes"] = m.allocBytes
+	mp["free_bytes"] = m.freeBytes
+	mp["alloc_obj"] = m.allocObjects
+	mp["free_obj"] = m.freeObjects
+	mp["inuse_bytes"] = m.allocBytes - m.freeBytes
+	mp["inuse_obj"] = m.allocObjects - m.freeObjects
+	mp["stack"] = strings.Join(m.stack, "\n")
+
+	return mp
+}
+
+func (m *memProfileData) String() string {
+	return fmt.Sprintf("[%d, %d, %d, %d]\n%s\n\n", m.allocBytes, m.freeBytes, m.allocObjects, m.freeObjects, strings.Join(m.stack, "\n"))
 }

@@ -10,10 +10,6 @@ import (
 )
 
 func init() {
-	gomon.configSetters = map[string]ConfigSetterFunc{}
-	gomon.listenerFactories = make([]ListenerFactoryFunc, 0, 3)
-	gomon.listeners = make([]Listener, 0, 3)
-
 	gomon.applicationScope = newEventTrackerImpl(&gomon)
 	gomon.applicationScope.SetFingerprint("application")
 	gomon.applicationScope.Set("execution-id", uuid.New())
@@ -44,8 +40,10 @@ type Retransmitter struct {
 type Gomon struct {
 	Retransmitter
 
+	enabled          bool
 	started          bool
-	applicationScope *eventTrackerImpl
+	applicationScope EventTracker
+	oldAppScope      EventTracker
 
 	configSettersMu sync.RWMutex
 	configSetters   map[string]ConfigSetterFunc
@@ -57,11 +55,22 @@ type Gomon struct {
 var _ Listener = (*Retransmitter)(nil)
 var _ Listener = (*Gomon)(nil)
 
-var gomon Gomon
+var gomon = Gomon{
+	Retransmitter: Retransmitter{
+		applicationScope:  nil,
+		listenerFactories: make([]ListenerFactoryFunc, 0, 3),
+		listeners:         make([]Listener, 0, 3),
+	},
+	enabled:          true,
+	started:          false,
+	applicationScope: nil,
+	configSetters:    make(map[string]ConfigSetterFunc),
+	temporalConfigs:  make(map[string]TrackerConfig),
+}
 
 func (g *Gomon) Start() {
 	g.started = true
-	if g.applicationScope.appID == nil {
+	if g.applicationScope.AppID() == nil {
 		g.applicationScope.SetAppID(uuid.New().String())
 	}
 	g.Feed(g.applicationScope)
@@ -72,7 +81,6 @@ func (g *Gomon) SetApplicationID(identifier string) {
 }
 
 func (g *Gomon) SetConfigFunc(name string, fnc ConfigSetterFunc) {
-	fmt.Println("plugin is registered", name)
 	g.configSettersMu.Lock()
 	defer g.configSettersMu.Unlock()
 	_, has := g.configSetters[name]
@@ -130,9 +138,27 @@ func (g *Gomon) Feed(et EventTracker) {
 	}
 }
 
+func (g *Gomon) SetEnabled(enable bool) {
+	if g.enabled == enable {
+		return
+	}
+
+	if enable {
+		g.applicationScope = g.oldAppScope
+	} else {
+		g.oldAppScope = g.applicationScope
+		g.applicationScope = newNullTracker()
+	}
+
+	g.enabled = enable
+}
+
+func (g *Gomon) Toggle() {
+	g.SetEnabled(!g.enabled)
+}
+
 func (g *Retransmitter) Feed(et EventTracker) {
 	// too dummy for production
-	// fmt.Printf("retransmitting... %p\n", g)
 	if g.applicationScope == nil {
 		g.applicationScope = et
 	}
@@ -153,7 +179,6 @@ func (g *Retransmitter) AddListener(listener Listener) {
 }
 
 func (g *Retransmitter) AddListenerFactory(factory ListenerFactoryFunc, conf ListenerConfig) {
-	fmt.Println("listener is registered")
 	g.listenerFactoriesMu.Lock()
 	g.listenerFactories = append(g.listenerFactories, factory)
 	g.listenerFactoriesMu.Unlock()
@@ -199,4 +224,21 @@ func Start() {
 
 func SetApplicationID(identifier string) {
 	gomon.SetApplicationID(identifier)
+}
+
+func Disable() {
+	gomon.SetEnabled(false)
+}
+
+func Enable() {
+	gomon.SetEnabled(true)
+}
+
+func Toggle() {
+	gomon.Toggle()
+}
+
+func NewSegmentFromContext(ctx context.Context, name string) Segment {
+	panic("not implemented yet")
+	return nil
 }
