@@ -82,6 +82,46 @@ func main() {
 	log.Fatal(http.ListenAndServe(":12345", httpmon.MonitoringHandler(nil)))
 }
 
+// generated events
+// first event is always "application scope data"
+{
+    "id": "uuid",
+    "host": "hostname",
+    "execution-id": "uuid",
+    "start": "time in nanoseconds",
+    "gomon:fp": "application",
+    "lapsed": 0
+}
+
+{
+    "id": "uuid",
+    "parent": "parent-uuid",
+    "app-id": "execution-id-from-first-event",
+    "gomon:lapsed": 109273, // time in nanoseconds
+    "direction": "incoming",
+	"gomon:fp": "http-wmux-servehttp",
+	"gomon:start": 11111111111111111111, // unix time since epoch (nanoseconds)
+	"headers": {
+		"Accept": ["text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8"],
+		"Accept-Encoding": ["gzip, deflate, br"],
+		"Accept-Language": ["en-US,en;q=0.8"],
+		"Cache-Control": ["max-age=0"],
+		"Connection": ["keep-alive"],
+		"Upgrade-Insecure-Requests": ["1"],
+		"User-Agent": ["Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/61.0.3163.100 Safari/537.36"]
+	},
+	"method": "GET",
+	"proto": "HTTP/1.1",
+	"response_body": bytes.Buffer("hello, world!"),
+	"response_code": 200,
+	"response_headers": {},
+	"url": {
+		"host": "",
+		"path": "/hello",
+		"scheme": ""
+	}
+}
+
 ```
 
 database monitoring (with driver)
@@ -133,6 +173,40 @@ func main() {
         rows.Scan(&tid, &lang)
         _, _ = tid, lang
 	}
+}
+
+// generated events
+{
+    // "application scope data"
+}
+// query
+{
+    "id": "uuid",
+    "parent": "database-connection-id",
+    "app-id": "execution-id-from-first-event",
+    "start": 111111111111111,
+    "gomon:lapsed": 650032, //ns
+    "gomon:fp":"sql-wconn-queryctx",
+    "query":"select id from test limit 10",
+}
+// rows from above query
+{
+    "id": "uuid",
+    "parent": "uuid-of-sql-wconn-queryctx",
+    "app-id": "execution-id-from-first-event",
+    "start": 111111111111111,
+    "gomon:lapsed": 191000, //ns
+    "gomon:fp":"sql-wrows",
+    "rows":[[1],[1],[1],[1],[1],[1],[1],[1],[1],[1]]
+}
+// time spent in open database connection
+{
+    "id": "uuid",
+    "parent": "app-scope-id",
+    "app-id": "execution-id-from-first-event",
+    "start": 111111111111111,
+    "gomon:lapsed": 12191000, //ns
+    "gomon:fp":"sql-wconn",
 }
 ```
 

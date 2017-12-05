@@ -3,7 +3,6 @@ package main
 import (
 	"database/sql"
 	"fmt"
-	"log"
 	"os"
 
 	"context"
@@ -14,7 +13,7 @@ import (
 	"github.com/lib/pq"
 )
 
-func main__sql() {
+func main() {
 	dsn := os.Getenv("DSN")
 	if len(dsn) == 0 {
 		panic("DSN not set")
@@ -44,25 +43,4 @@ func main__sql() {
 		rows.Scan(&tid, &lang)
 	}
 
-	//////////
-	tx, err := db.Begin()
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer tx.Rollback()
-	stmt, err := tx.Prepare("INSERT INTO public.test (id) VALUES (1)")
-	if err != nil {
-		panic(err.Error())
-	}
-	defer stmt.Close()
-	for i := 0; i < 10; i++ {
-		_, err = stmt.Exec()
-		if err != nil {
-			panic(err.Error())
-		}
-	}
-	err = tx.Commit()
-	if err != nil {
-		panic(err.Error())
-	}
 }

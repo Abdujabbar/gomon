@@ -167,6 +167,7 @@ func (wcn *wrappedConn) Query(query string, args []driver.Value) (rows driver.Ro
 func (wcn *wrappedConn) QueryContext(ctx context.Context, query string, args []driver.NamedValue) (rows driver.Rows, err error) {
 	et := wcn.et.NewChild(false)
 	et.SetFingerprint("sql-wconn-queryctx")
+	et.Set("query", query)
 	defer func() {
 		if err != nil {
 			et.AddError(err)

@@ -19,7 +19,7 @@ func helloServer(w http.ResponseWriter, req *http.Request) {
 
 // change main until we create tests for this plugin
 // or think about using tests from net/http
-func main_http() {
+func main() {
 	retransmitterListener := &gomon.Retransmitter{}
 	retransmitterListener.AddListenerFactory(listener.NewLogListener, nil)
 	gomon.RegisterListener(retransmitterListener)
