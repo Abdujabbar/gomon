@@ -1,6 +1,6 @@
 # GoMon
 
-Application performance monitoring tool
+Application performance monitoring tool (Not even alpha)
 
 ## Monitoring areas
 * Web server performance monitoring
