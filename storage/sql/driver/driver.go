@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"errors"
+	"strings"
 
 	"github.com/iahmedov/gomon"
 )
@@ -91,10 +92,21 @@ var (
 	KeyNamedParams = "named_params"
 )
 
-func MonitoringDriver(d driver.Driver) driver.Driver {
+func MonitoredDriver(d driver.Driver) driver.Driver {
 	return &wrappedDriver{
 		parent: d,
 		c:      defaultConfig,
+	}
+}
+
+func AutoRegister() {
+	for _, driver := range sql.Drivers() {
+		if strings.HasPrefix(driver, "monitored-") {
+			continue
+		}
+		db, _ := sql.Open(driver, "")
+		sql.Register("monitored-"+driver, MonitoredDriver(db.Driver()))
+		db.Close()
 	}
 }
 

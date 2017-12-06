@@ -22,7 +22,7 @@ func main() {
 	gomon.SetApplicationID("sql-example")
 	gomon.Start()
 
-	sql.Register("monitored-postgres", driver.MonitoringDriver(&pq.Driver{}))
+	sql.Register("monitored-postgres", driver.MonitoredDriver(&pq.Driver{}))
 
 	db, err := sql.Open("monitored-postgres", dsn)
 	if err != nil {

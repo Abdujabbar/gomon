@@ -152,7 +152,8 @@ func main() {
 	gomon.SetApplicationID("sql-example")
 	gomon.Start()
 
-	sql.Register("monitored-postgres", driver.MonitoringDriver(&pq.Driver{}))
+    sql.Register("monitored-postgres", driver.MonitoredDriver(&pq.Driver{}))
+    // or use `driver.AutoRegister()` in order to auto wrap all available drivers
 
 	db, err := sql.Open("monitored-postgres", dsn)
 	if err != nil {
@@ -260,8 +261,6 @@ There are 3 main parts of monitoring
 
 
 ## Plugin system (?????)
-
-Every new plugin should implement Plugin interface and register itself in Gomon. In order to listen for events happening inside Plugin implement PluginListener and register it in Gomon
 
 Every new plugin should 
 - create Config structure which implements gomon.TrackerConfig
