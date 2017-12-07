@@ -91,6 +91,8 @@ func (p *PluginConfig) Name() string {
 }
 
 func IncomingRequestTracker(w http.ResponseWriter, r *http.Request, config *PluginConfig) httpEventTracker {
+	// TODO:
+	// NOTE: what if use httputil.DumpRequest ?
 	tracker := &httpEventTrackerImpl{gomon.FromContext(nil).NewChild(false)}
 
 	tracker.SetDirection(kHttpDirectionIncoming)

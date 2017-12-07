@@ -210,7 +210,7 @@ func FromContext(ctx context.Context) EventTracker {
 	return gomon.FromContext(ctx)
 }
 
-func ContextWith(ctx context.Context, et EventTracker) context.Context {
+func WithContext(ctx context.Context, et EventTracker) context.Context {
 	return context.WithValue(ctx, eventTrackerKey{}, et)
 }
 

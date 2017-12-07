@@ -267,7 +267,7 @@ func (wcn *wrappedConn) BeginTx(ctx context.Context, opts driver.TxOptions) (tx 
 	}()
 
 	if parentBeginTx, ok := wcn.parent.(driver.ConnBeginTx); ok {
-		tx, err = parentBeginTx.BeginTx(gomon.ContextWith(ctx, et), opts)
+		tx, err = parentBeginTx.BeginTx(gomon.WithContext(ctx, et), opts)
 	} else {
 		tx, err = wcn.parent.Begin()
 	}

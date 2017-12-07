@@ -42,9 +42,13 @@ Application performance monitoring tool (Not even alpha)
     * [x] Listener
     * [x] EventTracker
 * Network request monitoring
-    * [ ] net.Listener
     * [ ] HTTP request
-    * [ ] Socket opening / listening
+    * [x] Raw Socket
+        * [x] net.Conn
+        * [ ] net.PacketConn
+        * [x] net.Conn + net.PacketConn
+        * [x] net.Listener
+        * [ ] net/textproto.Conn
     * [ ] Redis
     * [ ] gRPC
     * [ ] Kafka

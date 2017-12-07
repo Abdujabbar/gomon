@@ -18,7 +18,7 @@ type wrappedFile struct {
 	et                  gomon.EventTracker
 }
 
-func Wrap(f *os.File) *wrappedFile {
+func MonitoredFile(f *os.File) *wrappedFile {
 	et := gomon.FromContext(nil).NewChild(false)
 	// in order to link other events to this event, we need to submit it to listener
 	defer et.Finish()
