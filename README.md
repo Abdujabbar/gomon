@@ -52,6 +52,12 @@ Application performance monitoring tool (Not even alpha)
     * [ ] Redis
     * [ ] gRPC
     * [ ] Kafka
+* Loggers - add integrations to logger libraries so that any logged info can be traced
+    * [ ] log
+    * [ ] zap [https://github.com/uber-go/zap]
+    * [ ] logrus [https://github.com/sirupsen/logrus]
+    * [ ] zerolog [https://github.com/rs/zerolog]
+* [ ] Source code performance monitoring (segments)
 * [ ] TESTS, TESTS, TESTS (instead of testing with examples write tests)
 * Monkey patching (???)
 
@@ -239,12 +245,20 @@ for i < 1000 {
             "name": "123",
             "location": "file.go:45",
             "total_lapsed": 250*1000, // "250us"
+            "min": 240,
+            "max": 290,
+            "p50": 255,
+            "p99": 280,
             "avg": 250 // 250ns
         },
         {
             "name": "ch2",
             "location": "file.go:57",
             "total_lapsed": 50*1000, // "50us"
+            "min": 40,
+            "max": 90,
+            "p50": 55,
+            "p99": 85,
             "avg": 50 // 50ns
         }
     ],
