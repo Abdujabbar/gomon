@@ -1,10 +1,16 @@
 package http
 
 import (
+	"bufio"
 	"bytes"
+	"errors"
+	"fmt"
+	"net"
 	"net/http"
+	"os"
 
 	"github.com/iahmedov/gomon"
+	gomonnet "github.com/iahmedov/gomon/net"
 )
 
 func init() {
@@ -31,6 +37,9 @@ type wrappedMux struct {
 }
 
 type wrappedResponseWriter struct {
+	// http.CloseNotifier, http.Flusher, http.Hijacker?
+	// for now assume they are always implemented by
+	// underlying ResponseWriter
 	http.ResponseWriter
 
 	tracker      httpEventTracker
@@ -90,7 +99,7 @@ func (p *PluginConfig) Name() string {
 	return pluginName
 }
 
-func IncomingRequestTracker(w http.ResponseWriter, r *http.Request, config *PluginConfig) httpEventTracker {
+func requestTracker(r *http.Request, config *PluginConfig) httpEventTracker {
 	// TODO:
 	// NOTE: what if use httputil.DumpRequest ?
 	tracker := &httpEventTrackerImpl{gomon.FromContext(nil).NewChild(false)}
@@ -99,6 +108,10 @@ func IncomingRequestTracker(w http.ResponseWriter, r *http.Request, config *Plug
 	tracker.SetMethod(r.Method)
 	tracker.SetURL(r.URL)
 	tracker.SetProto(r.Proto)
+	tracker.Set("content-length", r.ContentLength)
+	tracker.Set("encoding", r.TransferEncoding)
+	tracker.Set("close", r.Close)
+
 	if config.RequestHeaders {
 		tracker.SetRequestHeaders(r.Header)
 	}
@@ -107,6 +120,12 @@ func IncomingRequestTracker(w http.ResponseWriter, r *http.Request, config *Plug
 		tracker.SetRequestRemoteAddress(r.RemoteAddr)
 	}
 
+	return tracker
+}
+
+func IncomingRequestTracker(w http.ResponseWriter, r *http.Request, config *PluginConfig) httpEventTracker {
+	tracker := requestTracker(r, config)
+	tracker.SetDirection(kHttpDirectionIncoming)
 	return tracker
 }
 
@@ -160,6 +179,14 @@ func (p *wrappedMux) MonitoringWrapper(handler http.HandlerFunc) http.HandlerFun
 }
 
 func monitoredResponseWriter(w http.ResponseWriter, config *PluginConfig, et gomon.EventTracker) http.ResponseWriter {
+	_, flusher := w.(http.Flusher)
+	_, notifier := w.(http.CloseNotifier)
+	_, hijacker := w.(http.Hijacker)
+
+	if !(flusher && notifier && hijacker) {
+		fmt.Fprintf(os.Stderr, "WARNING: ResponseWriter does not implement any of this interfaces http.Flusher, http.CloseNotifier, http.Hijacker")
+	}
+
 	wr := &wrappedResponseWriter{
 		ResponseWriter: w,
 		tracker:        &httpEventTrackerImpl{et},
@@ -210,6 +237,37 @@ func (r *wrappedResponseWriter) WriteHeader(code int) {
 	}
 
 	r.ResponseWriter.WriteHeader(code)
+}
+
+func (r *wrappedResponseWriter) Flush() {
+	flusher, ok := r.ResponseWriter.(http.Flusher)
+	if !ok {
+		return
+	}
+	flusher.Flush()
+	return
+}
+
+func (r *wrappedResponseWriter) CloseNotify() (ch <-chan bool) {
+	notifier, ok := r.ResponseWriter.(http.CloseNotifier)
+	if !ok {
+		return nil
+	}
+	ch = notifier.CloseNotify()
+	return
+}
+
+func (r *wrappedResponseWriter) Hijack() (c net.Conn, b *bufio.ReadWriter, err error) {
+	hijacker, ok := r.ResponseWriter.(http.Hijacker)
+	if !ok {
+		return nil, nil, errors.New("Hijack not implemented by underlying ResponseWriter")
+	}
+	r.tracker.Set("hijack", true)
+	c, b, err = hijacker.Hijack()
+	if c != nil {
+		c = gomonnet.MonitoredConn(c, nil)
+	}
+	return
 }
 
 func MonitoringHandler(handler http.Handler) http.Handler {
