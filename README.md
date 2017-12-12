@@ -42,7 +42,7 @@ Application performance monitoring tool (Not even alpha)
     * [x] Listener
     * [x] EventTracker
 * Network request monitoring
-    * [ ] HTTP request
+    * [x] HTTP request
     * [x] Raw Socket
         * [x] net.Conn
         * [ ] net.PacketConn
