@@ -5,7 +5,9 @@ import (
 	"crypto/tls"
 	"net"
 	"net/http"
+	"net/http/httptrace"
 	"net/url"
+	"time"
 
 	"github.com/iahmedov/gomon"
 	gomonnet "github.com/iahmedov/gomon/net"
@@ -13,6 +15,10 @@ import (
 
 type wrappedRoundTripper struct {
 	http.RoundTripper
+}
+
+type httpTraceWriterEventTracker struct {
+	gomon.EventTracker
 }
 
 type fncProxy func(*http.Request) (*url.URL, error)
@@ -23,8 +29,27 @@ type fncNextProto func(authority string, c *tls.Conn) http.RoundTripper
 
 var _ http.RoundTripper = (*wrappedRoundTripper)(nil)
 
+func AutoRegister() {
+	http.DefaultClient = MonitoredClient(http.DefaultClient)
+	if transport, ok := http.DefaultTransport.(*http.Transport); ok {
+		http.DefaultTransport = MonitoredTransport(transport)
+	}
+	http.DefaultTransport = MonitoredRoundTripper(http.DefaultTransport)
+}
+
 func MonitoredRoundTripper(roundTripper http.RoundTripper) http.RoundTripper {
 	return &wrappedRoundTripper{roundTripper}
+}
+
+func MonitoredClient(client *http.Client) (c *http.Client) {
+	tmp := *client
+	c = &tmp
+	if c.Transport == nil {
+		c.Transport = MonitoredRoundTripper(http.DefaultTransport)
+	} else {
+		c.Transport = MonitoredRoundTripper(c.Transport)
+	}
+	return
 }
 
 func MonitoredTransport(transport *http.Transport) *http.Transport {
@@ -49,20 +74,47 @@ func OutgoingRequestTracker(r *http.Request, config *PluginConfig) httpEventTrac
 }
 
 func (w *wrappedRoundTripper) RoundTrip(r *http.Request) (resp *http.Response, err error) {
+	// all of the httptrace + internal/nettrace logic will be run
+	// inside the DefaultTransport (RoundTripper)
+	// thats why its ok to put httptrace related things here
 	et := OutgoingRequestTracker(r, defaultConfig)
-	defer et.Finish()
-	et.SetFingerprint("http-roundtriperer")
 
-	// TODO: parse response or Dump(without body?)
+	traceWriter := &httpTraceWriterEventTracker{et}
 
-	return w.RoundTripper.RoundTrip(r)
+	trace := &httptrace.ClientTrace{
+		GetConn:              traceWriter.GetConn,
+		GotFirstResponseByte: traceWriter.GotFirstResponseByte,
+		// sometimes when DNSStart and DNSDone enabled requests were too slow
+		// maybe it was random network issues on my side when testing
+		// if it happens again investigate
+		DNSStart:          traceWriter.DNSStart,
+		DNSDone:           traceWriter.DNSDone,
+		ConnectStart:      traceWriter.ConnectStart,
+		ConnectDone:       traceWriter.ConnectDone,
+		TLSHandshakeStart: traceWriter.TLSHandshakeStart,
+		TLSHandshakeDone:  traceWriter.TLSHandshakeDone,
+	}
+	r = r.WithContext(httptrace.WithClientTrace(r.Context(), trace))
+
+	defer func() {
+		if err != nil {
+			et.AddError(err)
+		} else {
+			fillTrackerWithResponse(resp, et)
+		}
+		et.Finish()
+	}()
+	et.SetFingerprint("http-roundtripper")
+
+	resp, err = w.RoundTripper.RoundTrip(r)
+	return
 }
 
 func wrapTransportProxy(f fncProxy) fncProxy {
 	if f == nil {
 		return nil
 	}
-	panic("not implemented yet")
+
 	return func(r *http.Request) (u *url.URL, err error) {
 		et := OutgoingRequestTracker(r, defaultConfig)
 		defer et.Finish()
@@ -70,9 +122,9 @@ func wrapTransportProxy(f fncProxy) fncProxy {
 		u, err = f(r)
 		if err != nil {
 			et.AddError(err)
+		} else {
+			et.Set("proxy-path", u.Path)
 		}
-
-		// TODO: log u
 
 		return
 	}
@@ -160,3 +212,53 @@ func wrapTransportNextProto(f fncNextProto) fncNextProto {
 		return MonitoredRoundTripper(r)
 	}
 }
+
+func (h *httpTraceWriterEventTracker) GetConn(hostPort string) {
+	// go fmt.Println("getconn", time.Now())
+	h.EventTracker.Set("get-conn", time.Now())
+}
+
+func (h *httpTraceWriterEventTracker) GotFirstResponseByte() {
+	// go fmt.Println("gotf", time.Now())
+	h.EventTracker.Set("first-byte", time.Now())
+}
+
+func (h *httpTraceWriterEventTracker) DNSStart(httptrace.DNSStartInfo) {
+	// go fmt.Println("dnsstart", time.Now())
+	h.EventTracker.Set("dns-start", time.Now())
+}
+
+func (h *httpTraceWriterEventTracker) DNSDone(httptrace.DNSDoneInfo) {
+	// go fmt.Println("dnsdone", time.Now())
+	h.EventTracker.Set("dns-done", time.Now())
+}
+
+func (h *httpTraceWriterEventTracker) ConnectStart(network, addr string) {
+	// go fmt.Println("connstart", time.Now())
+	h.EventTracker.Set("conn-start", time.Now())
+}
+
+func (h *httpTraceWriterEventTracker) ConnectDone(network, addr string, err error) {
+	// go fmt.Println("conndone", time.Now())
+	h.EventTracker.Set("conn-done", time.Now())
+
+}
+
+func (h *httpTraceWriterEventTracker) TLSHandshakeStart() {
+	// go fmt.Println("tlshand", time.Now())
+	h.EventTracker.Set("tls-hand-start", time.Now())
+}
+
+func (h *httpTraceWriterEventTracker) TLSHandshakeDone(tls.ConnectionState, error) {
+	// go fmt.Println("tlsdone", time.Now())
+	h.EventTracker.Set("tls-hand-done", time.Now())
+
+}
+
+// unused so far
+// func (h *httpTraceWriterEventTracker) GotConn(httptrace.GotConnInfo) {}
+// func (h *httpTraceWriterEventTracker) PutIdleConn(err error) {}
+// func (h *httpTraceWriterEventTracker) Got100Continue() {}
+// func (h *httpTraceWriterEventTracker) WroteHeaders() {}
+// func (h *httpTraceWriterEventTracker) Wait100Continue() {}
+// func (h *httpTraceWriterEventTracker) WroteRequest(httptrace.WroteRequestInfo) {}

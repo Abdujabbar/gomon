@@ -134,7 +134,7 @@ func (g *Gomon) Feed(et EventTracker) {
 	if !g.started {
 		panic("monitoring not started but received event")
 	} else {
-		g.Retransmitter.Feed(et)
+		go g.Retransmitter.Feed(et)
 	}
 }
 

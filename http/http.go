@@ -123,6 +123,12 @@ func requestTracker(r *http.Request, config *PluginConfig) httpEventTracker {
 	return tracker
 }
 
+func fillTrackerWithResponse(resp *http.Response, et gomon.EventTracker) {
+	et.Set("resp-status", resp.StatusCode)
+	et.Set("resp-header", resp.Header)
+	et.Set("resp-contentlen", resp.ContentLength)
+}
+
 func IncomingRequestTracker(w http.ResponseWriter, r *http.Request, config *PluginConfig) httpEventTracker {
 	tracker := requestTracker(r, config)
 	tracker.SetDirection(kHttpDirectionIncoming)
